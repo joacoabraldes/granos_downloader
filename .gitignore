@@ -1,6 +1,25 @@
+# Entorno / secretos
 .env
+
+# Python
 __pycache__/
 *.pyc
 venv/
 .venv/
 
+# Datos crudos / Excel (la carga histórica ya vive en Supabase; no se versionan)
+*.xlsx
+*.xls
+*.xlsb
+*.csv
+
+# Imágenes / capturas / fotos
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.heic
+
+# Notas y docs sueltos (incluye README)
+*.md

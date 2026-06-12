@@ -22,7 +22,7 @@ create table if not exists molienda_granos (
 create index if not exists molienda_granos_date_estado_idx
     on molienda_granos (date, estado, ingested_at desc);
 
--- Una sola fila desestacionalizada por mes (UPSERT desde seasonal.py).
+-- Una sola fila desestacionalizada por mes (UPSERT desde el núcleo X-13).
 create unique index if not exists molienda_granos_desest_uq
     on molienda_granos (date)
     where estado = 'desestacionalizado';

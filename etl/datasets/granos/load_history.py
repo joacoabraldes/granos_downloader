@@ -4,21 +4,21 @@ Lee `descarga_molienda_oleaginosas_historico.xlsx`, toma la sección GRANOS
 OLEAGINOSOS (columnas C-I: soja, girasol, lino, maní, algodón, cártamo, canola),
 calcula el total y lo inserta con estado=NULL (histórico). Idempotente: usa
 insert_if_changed, así que re-correrlo no duplica meses ya cargados.
-
-NO se importa desde main.py.
 """
 from __future__ import annotations
 
 import argparse
 import datetime as dt
 import sys
+from pathlib import Path
 
 import openpyxl
 
-import db
-from magyp import GRANOS
+from etl.core import db
+from . import config
+from .source import GRANOS
 
-DEFAULT_XLSX = "descarga_molienda_oleaginosas_historico.xlsx"
+DEFAULT_XLSX = Path(__file__).parent / "data" / "descarga_molienda_oleaginosas_historico.xlsx"
 SHEET = "Molienda Oleaginosas"
 FIRST_DATA_ROW = 6          # fila 5 = headers
 YEAR_COL, MONTH_COL = 1, 2  # A, B
@@ -50,11 +50,12 @@ def read_rows(path: str) -> list[tuple[dt.date, dict]]:
     return rows
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Carga histórica del Excel (one-off).")
-    ap.add_argument("--xlsx", default=DEFAULT_XLSX, help="ruta al Excel")
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(prog="etl granos load-history",
+                                 description="Carga histórica del Excel (one-off).")
+    ap.add_argument("--xlsx", default=str(DEFAULT_XLSX), help="ruta al Excel")
     ap.add_argument("--force", action="store_true", help="re-insertar aunque no cambie")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     rows = read_rows(args.xlsx)
     if not rows:
@@ -66,8 +67,11 @@ def main() -> None:
     inserted = 0
     try:
         for date, row in rows:
-            if db.insert_if_changed(conn, date, row, estado=None,
-                                    fuente=FUENTE, force=args.force):
+            if db.insert_if_changed(
+                conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[date],
+                value_cols=config.VALUE_COLS, row=row, estado=None, fuente=FUENTE,
+                force=args.force,
+            ):
                 inserted += 1
     finally:
         conn.close()

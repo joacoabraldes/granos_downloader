@@ -17,8 +17,8 @@ import sys
 
 import urllib3
 
-import db
-import magyp
+from etl.core import db, seasonal
+from . import config, source
 
 ESTADO = "provisorio"
 
@@ -43,19 +43,20 @@ def _missing(d: dt.date, available: list[dt.date]) -> list[dt.date]:
     return []
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="ETL incremental molienda oleaginosas.")
+def main(argv=None) -> None:
+    ap = argparse.ArgumentParser(prog="etl granos",
+                                 description="ETL incremental molienda oleaginosas.")
     ap.add_argument("--month", help="procesar solo este mes (YYYY-MM)")
     ap.add_argument("--months-back", type=int, default=6,
                     help="últimos N meses publicados a revisar (default 6)")
     ap.add_argument("--force", action="store_true", help="insertar aunque no cambie")
     ap.add_argument("--no-desest", action="store_true",
                     help="saltear desestacionalización X-13")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     urllib3.disable_warnings()
-    html = magyp.fetch_html()
-    parsed = magyp.parse_molienda(html)
+    html = source.fetch_html()
+    parsed = source.parse_molienda(html)
     if not parsed:
         print("No se parseó ningún mes del HTML.", file=sys.stderr)
         sys.exit(1)
@@ -69,8 +70,11 @@ def main() -> None:
     try:
         for d in dates:
             row = parsed[d]
-            if db.insert_if_changed(conn, d, row, estado=ESTADO,
-                                    fuente=magyp.PAGE_URL, force=args.force):
+            if db.insert_if_changed(
+                conn, table=config.TABLE, key_cols=config.KEY_COLS, key_vals=[d],
+                value_cols=config.VALUE_COLS, row=row, estado=ESTADO,
+                fuente=source.PAGE_URL, force=args.force,
+            ):
                 inserted += 1
                 print(f"  + {d:%Y-%m}  provisorio  valor={row['valor']:.0f}")
         print(f"Provisorios insertados/cambiados: {inserted}  |  "
@@ -78,8 +82,8 @@ def main() -> None:
 
         if not args.no_desest:
             try:
-                import seasonal
-                seasonal.run_desest(conn)
+                seasonal.deseasonalize(conn, table=config.TABLE,
+                                       source_view=config.ACTUAL_VIEW)
             except Exception as e:  # degradación elegante: el ETL no se rompe
                 print(f"[desest] saltado: {e}", file=sys.stderr)
     finally:
