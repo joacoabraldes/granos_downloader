@@ -28,12 +28,22 @@ def get_conn():
     url = os.environ.get("DATABASE_URL")
     if url:
         return psycopg2.connect(url)
+    host = os.environ.get("PGHOST") or os.environ.get("POSTGRES_HOST")
+    if not host:
+        raise RuntimeError(
+            "Falta DATABASE_URL. El .env no se versiona (está en .gitignore), así que en "
+            "un clone nuevo hay que crearlo. Creá un archivo .env en la raíz del repo con "
+            "la connection string del pooler de Supabase (proyecto afcp_cemento):\n"
+            "  DATABASE_URL=postgresql://postgres.<ref>:<PASS>"
+            "@aws-1-<region>.pooler.supabase.com:5432/postgres\n"
+            "Opcional para X-13:  X13PATH=<carpeta del binario x13as>"
+        )
     return psycopg2.connect(
-        host=os.environ.get("PGHOST") or os.environ["POSTGRES_HOST"],
+        host=host,
         port=os.environ.get("PGPORT", os.environ.get("POSTGRES_PORT", "5432")),
         dbname=os.environ.get("PGDATABASE", os.environ.get("POSTGRES_DB", "postgres")),
         user=os.environ.get("PGUSER", os.environ.get("POSTGRES_USER", "postgres")),
-        password=os.environ.get("PGPASSWORD") or os.environ["POSTGRES_PASSWORD"],
+        password=os.environ.get("PGPASSWORD") or os.environ.get("POSTGRES_PASSWORD", ""),
         sslmode=os.environ.get("PGSSLMODE", os.environ.get("POSTGRES_SSLMODE", "require")),
     )
 

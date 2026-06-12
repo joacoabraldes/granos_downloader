@@ -21,6 +21,7 @@ SUBCOMMANDS = {"run", "load-history"}
 USAGE = (
     "uso: python -m etl <dataset> [run|load-history] [flags]\n"
     "     python -m etl init-db [datasets...]\n"
+    "     python -m etl export  [datasets...] [--dir CARPETA]\n"
     f"     datasets: {', '.join(DATASETS)}"
 )
 
@@ -35,6 +36,10 @@ def main(argv=None) -> None:
 
     if cmd == "init-db":
         importlib.import_module("etl.initdb").main(rest)
+        return
+
+    if cmd == "export":
+        importlib.import_module("etl.export").main(rest)
         return
 
     if cmd not in DATASETS:

@@ -49,17 +49,22 @@ def _es_contigua(dates) -> bool:
     return True
 
 
-def _write_spc(path, dates, values):
-    """Escribe el .spc de X-13 con los datos wrapeados a VALORES_POR_LINEA por línea."""
+def _write_spc(path, dates, values, mode=None):
+    """Escribe el .spc de X-13 con los datos wrapeados a VALORES_POR_LINEA por línea.
+
+    `mode` = modo del X-11 ('add' aditivo / None = default multiplicativo). El
+    multiplicativo no admite valores <= 0; para series con ceros/negativos usar 'add'.
+    """
     y, m = dates[0].year, dates[0].month
     nums = [f"{v:.3f}" for v in values]
     bloques = ["  " + " ".join(nums[i:i + VALORES_POR_LINEA])
                for i in range(0, len(nums), VALORES_POR_LINEA)]
     data = "\n".join(bloques)
+    x11_opts = "save=(d11)" if not mode else f"mode={mode} save=(d11)"
     spc = (
         f'series{{ title="serie" start={y}.{m:02d} period=12\n'
         f' data=(\n{data}\n ) }}\n'
-        f'x11{{ save=(d11) }}\n'
+        f'x11{{ {x11_opts} }}\n'
     )
     with open(path, "w") as f:
         f.write(spc)
@@ -117,9 +122,14 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         return "skipped"
 
     # 2. Correr x13as en un directorio temporal.
+    # El X-11 multiplicativo (default) no admite valores <= 0; si la serie tiene algún
+    # cero/negativo (p.ej. produccion abril-2020, COVID), usamos modo aditivo.
+    mode = "add" if any(v <= 0 for v in values) else None
+    if mode:
+        print(f"  [desest] serie con valores <= 0 -> X-11 aditivo (mode=add)")
     workdir = tempfile.mkdtemp(prefix="x13_")
     base = "serie"
-    _write_spc(os.path.join(workdir, base + ".spc"), dates, values)
+    _write_spc(os.path.join(workdir, base + ".spc"), dates, values, mode=mode)
     try:
         subprocess.run([x13bin, base], cwd=workdir, capture_output=True,
                        text=True, timeout=120)
