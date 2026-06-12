@@ -52,6 +52,8 @@ def main(argv=None) -> None:
     ap.add_argument("--force", action="store_true", help="insertar aunque no cambie")
     ap.add_argument("--no-desest", action="store_true",
                     help="saltear desestacionalización X-13")
+    ap.add_argument("--x13-out", metavar="DIR",
+                    help="guardar la salida de X-13 (html/factores/diagnósticos) en DIR")
     args = ap.parse_args(argv)
 
     urllib3.disable_warnings()
@@ -83,7 +85,8 @@ def main(argv=None) -> None:
         if not args.no_desest:
             try:
                 seasonal.deseasonalize(conn, table=config.TABLE,
-                                       source_view=config.ACTUAL_VIEW)
+                                       source_view=config.ACTUAL_VIEW,
+                                       keep_dir=args.x13_out)
             except Exception as e:  # degradación elegante: el ETL no se rompe
                 print(f"[desest] saltado: {e}", file=sys.stderr)
     finally:

@@ -1,0 +1,116 @@
+# ETLs mensuales → Supabase (granos · cemento · automotriz)
+
+Monorepo de ETLs de series mensuales argentinas. Un **núcleo compartido** + un paquete por
+serie, todo detrás de un solo CLI (`python -m etl ...`). Modelo de datos **append-only**
+(cada corrida guarda un snapshot, nunca pisa) con deduplicación, y **desestacionalización
+Census X-13** reutilizable. La base es el proyecto **`afcp_cemento`** de Supabase.
+
+## Series
+
+| Comando | Tabla | Fuente histórica | Fuente mensual (incremental) |
+|---|---|---|---|
+| `granos` | `molienda_granos` | Excel MAGyP | HTML MAGyP (provisorios) |
+| `cemento` | `cemento_despacho` | `cemento.xlsx` | HTML AFCP (provisorio/definitivo) |
+| `automotriz` | `automotriz` | `ind_automotriz.xlsx` | **PDF ADEFA** (pdfplumber) |
+
+`automotriz` maneja 3 series — **produccion, ventas (mayoristas), expo** — en formato
+*long* (una fila por `serie, date, estado`), cada una desestacionalizada por separado.
+
+## Estructura del repo
+
+```
+etl/
+  core/        db.py (conexión + insert/dedup genérico)  ·  seasonal.py (X-13)
+  datasets/<serie>/
+       source.py       scraping/parsing de la fuente
+       load_history.py carga histórica (one-off, desde Excel)
+       run.py          ETL incremental + desestacionalización
+       config.py       tabla/columnas de la serie
+       schema.sql      DDL de la serie (tabla + índices + vistas)
+  __main__.py  initdb.py  export.py
+```
+
+## Requisitos
+
+```bash
+pip install -r requirements.txt
+```
+Crear un archivo **`.env`** en la raíz (no se versiona) con la connection string del
+*pooler* de Supabase:
+```
+DATABASE_URL=postgresql://postgres.<ref>:<PASS>@aws-1-<region>.pooler.supabase.com:5432/postgres
+X13PATH=/ruta/a/la/carpeta/del/binario/x13as     # opcional, para la desestacionalización
+```
+
+## 1) Crear las tablas (DDL)
+
+Los **DDL están en `etl/datasets/<serie>/schema.sql`** (uno por serie). Para aplicarlos a
+la base apuntada por `DATABASE_URL`:
+
+```bash
+python -m etl init-db                 # crea las 3 tablas + sus vistas (idempotente)
+python -m etl init-db automotriz      # solo una serie
+```
+Es idempotente (`create table if not exists` / `create or replace view`): se puede correr
+las veces que haga falta.
+
+## 2) Carga histórica (una sola vez por serie)
+
+```bash
+python -m etl granos load-history
+python -m etl cemento load-history    # requiere cemento.xlsx en etl/datasets/cemento/data/
+python -m etl automotriz load-history
+```
+Inserta el histórico con `estado = NULL`.
+
+## 3) ETL incremental (mensual / cron)
+
+```bash
+python -m etl granos                  # baja últimos meses + desestacionaliza
+python -m etl cemento --month 2026-04
+python -m etl automotriz              # baja el PDF de ADEFA del mes + desestacionaliza
+python -m etl automotriz --no-fetch   # solo desestacionalizar (no baja el PDF)
+```
+Flags comunes: `--month YYYY-MM`, `--months-back N`, `--force`, `--no-desest`.
+
+## 4) Exportar los d11 (serie desestacionalizada) a CSV
+
+```bash
+python -m etl export                  # los 3 datasets a CSV en la carpeta actual
+python -m etl export automotriz       # solo automotriz -> automotriz_d11.csv
+python -m etl export automotriz --dir ~/csvs
+```
+`automotriz_d11.csv` sale en formato ancho: `date, produccion, ventas, expo`.
+
+## Modelo de datos
+
+Cada tabla es **append-only**: una corrida inserta un snapshot nuevo (con `ingested_at`)
+solo si el valor es nuevo o cambió respecto del último de ese `(clave, estado)`. `estado`:
+`NULL` = histórico (Excel) · `provisorio`/`definitivo` = fuente mensual · `desestacionalizado`
+= X-13. Vistas por serie:
+- `<serie>_actual`: serie **observada** (último snapshot por mes, excluye la desest).
+- `<serie>_desest`: serie **desestacionalizada** (X-13), un valor por mes.
+
+## Desestacionalización (Census X-13)
+
+`etl/core/seasonal.py` arma un `.spc`, ejecuta el binario `x13as` (ruta en `X13PATH`) y lee
+la tabla **d11**. Si `X13PATH`/el binario no están, **saltea con aviso** (no rompe el ETL;
+útil para correr el resto en Windows y la desest en una VM Linux).
+
+**Guardar la salida de X-13 (para auditar / ajustar la serie):** agregá `--x13-out DIR` a
+cualquier `run`. Guarda en `DIR/<serie>/` el corrido completo de `x13as`: el `serie.html`
+(modelo elegido, factores estacionales, diagnósticos M/Q), las tablas `serie.d10` (factores
+estacionales), `serie.d11` (desest), `serie.d12` (tendencia), `serie.d13` (irregular) y el
+`serie.spc` usado. Ej.: `python -m etl automotriz --no-fetch --x13-out ~/x13_out`.
+
+> **Modo del X-11**: por defecto **multiplicativo**. Si una serie tiene algún valor ≤ 0
+> (p.ej. `produccion` en **abril-2020**, COVID: plantas cerradas, producción 0), el núcleo
+> pasa esa serie a **aditivo** automáticamente (el multiplicativo no admite ceros). Por eso
+> hoy `produccion` se desestacionaliza en aditivo.
+
+## La fuente de automotriz (ADEFA)
+
+`etl/datasets/automotriz/source.py` baja el informe mensual
+(`https://www.adefa.org.ar/upload/estadisticas/resumen-<YYYY>-<MM>-es.pdf`) y, con
+`pdfplumber`, lee las 3 cifras del mes (Producción Nacional / Exportaciones / Ventas a
+Concesionarios) de la tabla **"Comparativo"** del PDF.

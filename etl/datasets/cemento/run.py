@@ -81,6 +81,8 @@ def main(argv=None):
                     help="inserta snapshot aunque el valor no haya cambiado")
     ap.add_argument("--no-desest", action="store_true",
                     help="saltea la desestacionalización (X-13) al final")
+    ap.add_argument("--x13-out", metavar="DIR",
+                    help="guardar la salida de X-13 (html/factores/diagnósticos) en DIR")
     args = ap.parse_args(argv)
 
     if args.month:
@@ -96,7 +98,8 @@ def main(argv=None):
         if not args.no_desest:
             try:
                 seasonal.deseasonalize(conn, table=config.TABLE,
-                                       source_view=config.ACTUAL_VIEW)
+                                       source_view=config.ACTUAL_VIEW,
+                                       keep_dir=args.x13_out)
             except Exception as e:  # X-13 nunca debe tumbar el ETL
                 print(f"  [desest] error inesperado: {e}")
     finally:

@@ -60,7 +60,9 @@ def _write_spc(path, dates, values, mode=None):
     bloques = ["  " + " ".join(nums[i:i + VALORES_POR_LINEA])
                for i in range(0, len(nums), VALORES_POR_LINEA)]
     data = "\n".join(bloques)
-    x11_opts = "save=(d11)" if not mode else f"mode={mode} save=(d11)"
+    # d10=factores estacionales, d11=serie desest, d12=tendencia, d13=irregular.
+    saves = "save=(d10 d11 d12 d13)"
+    x11_opts = saves if not mode else f"mode={mode} {saves}"
     spc = (
         f'series{{ title="serie" start={y}.{m:02d} period=12\n'
         f' data=(\n{data}\n ) }}\n'
@@ -87,13 +89,17 @@ def _parse_d11(path):
 
 def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
                   extra_cols=None, where=None, where_params=(),
-                  out_estado="desestacionalizado", fuente="census x13") -> str:
+                  out_estado="desestacionalizado", fuente="census x13",
+                  keep_dir=None) -> str:
     """Corre X-13 sobre la serie observada y hace UPSERT de la desestacionalizada.
 
     - `source_view`   vista con (date, valor) de la serie observada.
     - `where`/`where_params`  filtro opcional sobre la vista (p.ej. por `serie`).
     - `extra_cols`    columnas fijas a setear en cada fila insertada (p.ej. {"serie": ...}).
     - `conflict_cols` columnas del índice parcial único (target del ON CONFLICT).
+    - `keep_dir`      si se pasa, guarda la salida completa de x13as (serie.html con el
+                      modelo/factores/diagnósticos, + tablas d10/d11/d12/d13 y el .spc) en
+                      `keep_dir/<tag>/` y NO la borra (para inspeccionar / ajustar la serie).
 
     Devuelve "ok", "skipped" o "error".
     """
@@ -103,6 +109,7 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
         return "skipped"
 
     extra_cols = dict(extra_cols or {})
+    tag = "_".join(str(v) for v in extra_cols.values()) or table
 
     # 1. Serie observada (1 valor por mes) desde la vista.
     sql = f"select date, valor from {source_view}"
@@ -127,7 +134,11 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
     mode = "add" if any(v <= 0 for v in values) else None
     if mode:
         print(f"  [desest] serie con valores <= 0 -> X-11 aditivo (mode=add)")
-    workdir = tempfile.mkdtemp(prefix="x13_")
+    if keep_dir:
+        workdir = os.path.join(keep_dir, tag)
+        os.makedirs(workdir, exist_ok=True)
+    else:
+        workdir = tempfile.mkdtemp(prefix="x13_")
     base = "serie"
     _write_spc(os.path.join(workdir, base + ".spc"), dates, values, mode=mode)
     try:
@@ -158,8 +169,12 @@ def deseasonalize(conn, *, table, source_view, conflict_cols=("date",),
             cur.execute(sql, fixed + [d, val, out_estado, fuente])
     conn.commit()
 
-    shutil.rmtree(workdir, ignore_errors=True)
-    tag = " ".join(f"{k}={v}" for k, v in extra_cols.items())
+    if keep_dir:
+        print(f"  [desest] salida de X-13 guardada en {workdir} "
+              f"(serie.html, serie.d10/d11/d12/d13, serie.spc)")
+    else:
+        shutil.rmtree(workdir, ignore_errors=True)
+    label = " ".join(f"{k}={v}" for k, v in extra_cols.items())
     print(f"  [desest] {len(series)} meses desestacionalizados "
-          f"(UPSERT{', ' + tag if tag else ''}, fuente='{fuente}')")
+          f"(UPSERT{', ' + label if label else ''}, fuente='{fuente}')")
     return "ok"

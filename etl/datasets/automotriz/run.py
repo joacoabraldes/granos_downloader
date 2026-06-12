@@ -77,6 +77,8 @@ def main(argv=None) -> None:
                     help="saltear la descarga del PDF (solo desestacionalizar)")
     ap.add_argument("--no-desest", action="store_true",
                     help="saltear la desestacionalización X-13")
+    ap.add_argument("--x13-out", metavar="DIR",
+                    help="guardar la salida de X-13 (html/factores/diagnósticos) en DIR")
     args = ap.parse_args(argv)
     urllib3.disable_warnings()  # cert de ADEFA (verify=False)
 
@@ -99,6 +101,7 @@ def main(argv=None) -> None:
                         conn, table=config.TABLE, source_view=config.ACTUAL_VIEW,
                         conflict_cols=("serie", "date"), extra_cols={"serie": serie},
                         where="serie = %s", where_params=(serie,),
+                        keep_dir=args.x13_out,
                     )
                 except Exception as e:  # X-13 nunca tumba el ETL
                     print(f"  [desest] {serie}: error inesperado: {e}")
